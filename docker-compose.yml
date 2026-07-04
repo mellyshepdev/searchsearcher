@@ -1,0 +1,61 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: searchsearcher-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       searchsearcher
+      POSTGRES_USER:     searchsearcher
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - searchsearcher-postgres-data:/var/lib/postgresql/data
+    networks:
+      - searchsearcher-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U searchsearcher -d searchsearcher"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: searchsearcher-app:latest
+    container_name: searchsearcher-app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://searchsearcher:${DB_PASSWORD}@postgres:5432/searchsearcher
+      NODE_ENV: production
+      INGEST_TOKEN: ${INGEST_TOKEN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - searchsearcher-internal
+      - traefik_proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_proxy"
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.searchsearcher-http.rule=Host(`search.theofficialblacksheepco.com`)"
+      - "traefik.http.routers.searchsearcher-http.entrypoints=web"
+      - "traefik.http.routers.searchsearcher-http.middlewares=searchsearcher-redirect"
+      - "traefik.http.middlewares.searchsearcher-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.searchsearcher-redirect.redirectscheme.permanent=true"
+      # HTTPS
+      - "traefik.http.routers.searchsearcher-https.rule=Host(`search.theofficialblacksheepco.com`)"
+      - "traefik.http.routers.searchsearcher-https.entrypoints=websecure"
+      - "traefik.http.routers.searchsearcher-https.tls=true"
+      - "traefik.http.routers.searchsearcher-https.tls.certresolver=letsencrypt"
+      - "traefik.http.services.searchsearcher.loadbalancer.server.port=3000"
+
+volumes:
+  searchsearcher-postgres-data:
+
+networks:
+  searchsearcher-internal:
+    driver: bridge
+  traefik_proxy:
+    external: true
