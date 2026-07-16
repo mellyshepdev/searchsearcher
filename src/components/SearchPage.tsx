@@ -22,29 +22,29 @@ export default function SearchPage() {
 
   // Fetch servers and stats on mount
   useEffect(() => {
-    fetchServers();
-    fetchStats();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/servers");
+        const data = await res.json();
+        if (!cancelled && data.servers) setServers(data.servers);
+      } catch (err) {
+        console.error("Failed to fetch servers:", err);
+      }
+    })();
+    (async () => {
+      try {
+        const res = await fetch("/api/stats");
+        const data = await res.json();
+        if (!cancelled) setStats(data);
+      } catch (err) {
+        console.error("Failed to fetch stats:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  const fetchServers = async () => {
-    try {
-      const res = await fetch("/api/servers");
-      const data = await res.json();
-      if (data.servers) setServers(data.servers);
-    } catch (err) {
-      console.error("Failed to fetch servers:", err);
-    }
-  };
-
-  const fetchStats = async () => {
-    try {
-      const res = await fetch("/api/stats");
-      const data = await res.json();
-      setStats(data);
-    } catch (err) {
-      console.error("Failed to fetch stats:", err);
-    }
-  };
 
   const performSearch = useCallback(
     async (q: string, cat: string, srv: string, st: string) => {

@@ -1,0 +1,27 @@
+image: node:22
+
+stages:
+  - build
+  - test
+
+variables:
+  SECRET_DETECTION_ENABLED: 'true'
+  npm_config_cache: $CI_PROJECT_DIR/.npm
+
+app:
+  stage: build
+  script:
+    - npm install --prefer-offline
+    - npm run lint
+    - npm run typecheck
+    - npm run build
+  cache:
+    key: npm-searchsearcher
+    paths:
+      - .npm
+
+secret_detection:
+  stage: test
+
+include:
+  - template: Security/Secret-Detection.gitlab-ci.yml

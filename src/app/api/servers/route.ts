@@ -3,6 +3,9 @@ import { db } from "@/db";
 import { servers, searchableItems } from "@/db/schema";
 import { sql, eq } from "drizzle-orm";
 
+// Live data — never prerender at build time
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const allServers = await db
