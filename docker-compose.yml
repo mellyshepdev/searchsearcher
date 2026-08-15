@@ -18,6 +18,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot schema push. Built from the Dockerfile's `builder` stage because
+  # that is where drizzle-kit and the full dependency tree live; the runtime
+  # image deliberately ships neither. Runs to completion, then the app starts.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    image: searchsearcher-migrate:latest
+    container_name: searchsearcher-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://searchsearcher:${DB_PASSWORD}@postgres:5432/searchsearcher
+    command: ["npx", "drizzle-kit", "push", "--config=drizzle.config.ts", "--force"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - searchsearcher-internal
+
   app:
     build:
       context: .
@@ -32,13 +52,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - searchsearcher-internal
       - traefik_proxy
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik_proxy"
-      # HTTP -> HTTPS redirect
+      # HTTP -> HTTPS redirect. Redundant on unit7, whose Traefik already
+      # redirects at the entrypoint (entrypoints.web.http.redirections), but
+      # harmless and keeps this stack portable to a host that doesn't.
       - "traefik.http.routers.searchsearcher-http.rule=Host(`search.theofficialblacksheepco.com`)"
       - "traefik.http.routers.searchsearcher-http.entrypoints=web"
       - "traefik.http.routers.searchsearcher-http.middlewares=searchsearcher-redirect"
@@ -48,7 +72,9 @@ services:
       - "traefik.http.routers.searchsearcher-https.rule=Host(`search.theofficialblacksheepco.com`)"
       - "traefik.http.routers.searchsearcher-https.entrypoints=websecure"
       - "traefik.http.routers.searchsearcher-https.tls=true"
-      - "traefik.http.routers.searchsearcher-https.tls.certresolver=letsencrypt"
+      # unit7's Traefik names its ACME resolver "myresolver", not "letsencrypt".
+      # A name that doesn't exist means no certificate is ever issued.
+      - "traefik.http.routers.searchsearcher-https.tls.certresolver=myresolver"
       - "traefik.http.services.searchsearcher.loadbalancer.server.port=3000"
 
 volumes:

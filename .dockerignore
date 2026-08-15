@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gitlab-ci.yml
+node_modules
+.next
+npm-debug.log*
+.env
+.env.*
+README.md
+unified-multi-server-search-bar.zip
+tsconfig.tsbuildinfo
+# Companion Python tool — not part of the Next.js build
+tools
