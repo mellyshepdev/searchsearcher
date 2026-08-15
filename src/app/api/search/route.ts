@@ -97,7 +97,8 @@ export async function GET(request: NextRequest) {
 function weightedVector() {
   return sql`(
     setweight(to_tsvector('english', ${searchableItems.title}), 'A') ||
-    setweight(to_tsvector('english', coalesce(${searchableItems.content}, '')), 'B')
+    setweight(to_tsvector('english', coalesce(${searchableItems.content}, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(${searchableItems.keywords}, '')), 'D')
   )`;
 }
 
@@ -200,7 +201,8 @@ async function executeFallbackSearch(
     conditions.push(
       or(
         ilike(searchableItems.title, `%${query}%`),
-        ilike(searchableItems.content, `%${query}%`)
+        ilike(searchableItems.content, `%${query}%`),
+        ilike(searchableItems.keywords, `%${query}%`)
       )!
     );
   }

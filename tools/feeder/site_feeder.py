@@ -74,58 +74,80 @@ def page_text(soup: BeautifulSoup) -> Dict[str, str]:
     }
 
 
-def tags_for(parts: Dict[str, str], rules: Dict[str, List[str]]) -> List[str]:
-    """Tags matched against the page's whole text, head included."""
+def tag_hits(parts: Dict[str, str], rules: Dict[str, List[str]]) -> Dict[str, int]:
+    """How many *distinct* keywords of each rule the page matches.
+
+    Counting distinct keywords rather than testing "any keyword matched" is what
+    keeps the vocabulary honest. Several rules share weak words — `diesel`
+    contains "tech" and "vehicle" — so a single hit means almost nothing. On the
+    real sites, one-hit matching tagged a commercial cleaning page as `diesel`
+    and `training`, which would then have injected truck synonyms into it and
+    polluted every truck search.
+    """
     haystack = " ".join([parts["title"], parts["description"],
                          parts["keywords"], parts["body"]]).lower()
     if not haystack.strip():
-        return []
-    found = []
+        return {}
+    hits: Dict[str, int] = {}
     for tag, words in rules.items():
-        pattern = r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b"
-        if re.search(pattern, haystack, re.IGNORECASE):
-            found.append(tag)
-    return found
+        n = 0
+        for w in words:
+            if re.search(r"\b" + re.escape(w) + r"\b", haystack, re.IGNORECASE):
+                n += 1
+        if n:
+            hits[tag] = n
+    return hits
 
 
-def build_content(parts: Dict[str, str], tags: List[str],
-                  rules: Dict[str, List[str]], synonyms: bool) -> str:
-    """The text that actually gets indexed.
-
-    searchsearcher's full-text vector covers title (weight A) and content
-    (weight B) only — the tags[] column is stored but never searched. So
-    anything that should be findable has to land here.
-
-    With synonyms on, each matched tag also contributes its rule vocabulary.
-    That is what lets "trucks" find the Volvo D13 viewer: the page never says
-    "truck", but it matches the `diesel` rule, whose vocabulary includes truck,
-    semi and wheeler.
-    """
+def build_content(parts: Dict[str, str]) -> str:
+    """The page's own prose. Indexed at weight 'B'."""
     chunks = []
     if parts["description"]:
         chunks.append(parts["description"])
     if parts["body"]:
         chunks.append(parts["body"][:4000])
+    return "\n\n".join(chunks)
+
+
+def build_keywords(parts: Dict[str, str], tags: List[str],
+                   rules: Dict[str, List[str]], synonyms: bool,
+                   hits: Dict[str, int], syn_min: int) -> str:
+    """Inferred vocabulary. Indexed at weight 'D', the lowest.
+
+    This is what lets "trucks" find the Volvo D13 viewer: the page never says
+    "truck", but it matches the `diesel` rule, whose vocabulary includes truck,
+    semi and wheeler.
+
+    It is kept out of `content` deliberately. When synonyms lived in the prose
+    column, every page that brushed a rule scored identically to the page the
+    topic was actually about — "trucks" returned nine results all at rank 0.400.
+    At weight D (0.1 vs prose 0.4) a real match now outranks an inherited one.
+    """
+    parts_out = []
     if parts["keywords"]:
-        chunks.append(f"Keywords: {parts['keywords']}")
+        parts_out.append(parts["keywords"])
     if tags:
-        chunks.append(f"Tags: {', '.join(tags)}")
+        parts_out.append(", ".join(tags))
     if synonyms and tags:
-        related = []
-        seen = set()
-        for t in tags:
+        related, seen = [], set()
+        # Expansion needs stronger evidence than tagging does. Injecting a
+        # rule's whole vocabulary is aggressive: at the tagging threshold every
+        # page that merely brushed `diesel` inherited "truck", so a truck search
+        # returned nine pages tied at the same score and buried the one page
+        # actually about diesel engines.
+        for t in [t for t in tags if hits.get(t, 0) >= syn_min]:
             for w in rules.get(t, []):
                 # Bare digits ("18") add noise and match nothing useful.
                 if len(w) > 2 and w.lower() not in seen:
                     seen.add(w.lower())
                     related.append(w)
-        if related:
-            chunks.append(f"Related: {', '.join(related)}")
-    return "\n\n".join(chunks)
+        parts_out.extend(related)
+    return ", ".join(parts_out)
 
 
 def collect(directory: str, rules: Dict[str, List[str]], site: str,
-            base_url: str, server_name: str, synonyms: bool) -> List[dict]:
+            base_url: str, server_name: str, synonyms: bool,
+            min_hits: int, syn_min: int) -> List[dict]:
     items = []
     for root, _, files in os.walk(directory):
         for fn in sorted(files):
@@ -142,7 +164,9 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
 
             parts = page_text(soup)
             title = parts["title"] or rel
-            tags = tags_for(parts, rules)
+            hits = tag_hits(parts, rules)
+            tags = sorted([t for t, n in hits.items() if n >= min_hits],
+                          key=lambda t: -hits[t])
             # A page needs real prose of its own. Without it the "content"
             # would be nothing but the tags we just inferred, which indexes a
             # near-duplicate of whatever richer page shares its title.
@@ -150,7 +174,8 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 print(f"SKIP {rel} — no description or body text")
                 continue
 
-            content = build_content(parts, tags, rules, synonyms)
+            content = build_content(parts)
+            keywords = build_keywords(parts, tags, rules, synonyms, hits, syn_min)
             if not content.strip():
                 print(f"SKIP {rel} — no indexable text")
                 continue
@@ -165,6 +190,7 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 "category": "document",
                 "title": title,
                 "content": content,
+                "keywords": keywords,
                 # Unique per page, so the (server, source, title) upsert updates
                 # a page in place instead of colliding with its siblings.
                 "source": f"{site}:{rel.replace(os.sep, '/')}",
@@ -184,6 +210,10 @@ def main():
     ap.add_argument("--token", default=os.getenv("INGEST_TOKEN", ""))
     ap.add_argument("--server-name", default="gitlab-pages",
                     help="Which 'server' these pages are attributed to")
+    ap.add_argument("--min-hits", type=int, default=2,
+                    help="Distinct rule keywords a page must match to earn a tag")
+    ap.add_argument("--synonym-min-hits", type=int, default=3,
+                    help="Distinct keywords needed before a tag's vocabulary is injected")
     ap.add_argument("--no-synonyms", action="store_true",
                     help="Do not expand matched tags into their rule vocabulary")
     ap.add_argument("--dry-run", action="store_true", help="Print payloads, send nothing")
@@ -191,7 +221,8 @@ def main():
 
     rules = load_tag_rules()
     items = collect(args.directory, rules, args.site, args.base_url,
-                    args.server_name, not args.no_synonyms)
+                    args.server_name, not args.no_synonyms, args.min_hits,
+                    args.synonym_min_hits)
     if not items:
         print("nothing to index")
         return
@@ -202,7 +233,8 @@ def main():
             print(f"    title: {it['title']}")
             print(f"    tags : {', '.join(it['tags']) or '(none)'}")
             print(f"    url  : {it['metadata']['url'] or '(none)'}")
-            print(f"    content ({len(it['content'])} chars): {it['content'][:200]}...")
+            print(f"    content ({len(it['content'])} chars): {it['content'][:140]}...")
+            print(f"    keywords: {it['keywords'][:140]}")
         print(f"\nDRY RUN — {len(items)} page(s) would be pushed to {args.api}")
         return
 

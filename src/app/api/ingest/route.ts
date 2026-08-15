@@ -33,6 +33,7 @@ interface IngestBody {
   category: ItemCategory;
   title: string;
   content?: string;
+  keywords?: string;
   source?: string;
   tags?: string[];
   status?: ItemStatus;
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
       .update(searchableItems)
       .set({
         content: body.content ?? null,
+        keywords: body.keywords ?? null,
         status: body.status ?? "active",
         severity: body.severity ?? null,
         tags: body.tags ?? null,
@@ -121,6 +123,7 @@ export async function POST(request: NextRequest) {
       category: body.category,
       title: body.title,
       content: body.content ?? null,
+      keywords: body.keywords ?? null,
       source,
       tags: body.tags ?? null,
       status: body.status ?? "active",
