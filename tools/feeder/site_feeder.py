@@ -45,6 +45,31 @@ def load_tag_rules() -> Dict[str, List[str]]:
     return mod.TAG_RULES
 
 
+# Site-wide chrome. Present verbatim on every page, so anything read out of it
+# describes the site, not the page — and it poisons everything downstream:
+# the nav strip "Tech-Sector Cleaning Services Pet Services Junk Removal" got
+# the bible-study page tagged `diesel` (so it ranked for "diesel" searches) and
+# made the main site's image picker match /pet/ on literally every result.
+CHROME_SELECTORS = ("nav", "header", "footer", "script", "style", "noscript",
+                    "svg", "template")
+CHROME_CLASS_RE = re.compile(
+    r"(^|[\s_-])(nav|navbar|menu|header|footer|sidebar|breadcrumb|cookie|banner)"
+    r"([\s_-]|$)", re.I)
+
+
+def strip_chrome(soup: BeautifulSoup) -> None:
+    """Drop navigation and boilerplate before any text is read from the page."""
+    for tag in soup.find_all(CHROME_SELECTORS):
+        tag.decompose()
+    for tag in soup.find_all(attrs={"class": CHROME_CLASS_RE}):
+        tag.decompose()
+    for tag in soup.find_all(attrs={"id": CHROME_CLASS_RE}):
+        tag.decompose()
+    for tag in soup.find_all(attrs={"role": re.compile(
+            r"^(navigation|banner|contentinfo)$", re.I)}):
+        tag.decompose()
+
+
 def page_text(soup: BeautifulSoup) -> Dict[str, str]:
     """Everything worth indexing on a page.
 
@@ -65,11 +90,15 @@ def page_text(soup: BeautifulSoup) -> Dict[str, str]:
         title = soup.title.string.strip()
     title = title or meta("og:title", "twitter:title")
 
+    image = meta("og:image", "twitter:image")
+
+    strip_chrome(soup)
     body = soup.body.get_text(" ", strip=True) if soup.body else ""
     return {
         "title": title,
         "description": meta("description", "og:description", "twitter:description"),
         "keywords": meta("keywords"),
+        "image": image,
         "body": re.sub(r"\s+", " ", body).strip(),
     }
 
@@ -109,9 +138,34 @@ def build_content(parts: Dict[str, str]) -> str:
     return "\n\n".join(chunks)
 
 
+def site_terms(site: str, base_url: str) -> List[str]:
+    """The site's own name, in the forms someone would actually type.
+
+    Without this a site is unfindable by its own name: `site` only ever reached
+    `metadata`, which is a plain text column and not part of the search vector,
+    so "diesel.tech" matched nothing while the page it should have returned sat
+    in the index. Both the dotted name and its parts are emitted, because
+    to_tsquery('english') lexes "diesel.tech" as a single host token — a page
+    carrying only the word "diesel" is not a match for it, and vice versa.
+    """
+    terms, seen = [], set()
+    candidates = [site]
+    if base_url:
+        host = re.sub(r"^https?://", "", base_url).split("/")[0]
+        candidates += [host, host.split(".")[0]]
+    candidates += [p for p in re.split(r"[.\-_/]", site) if len(p) > 2]
+    for c in candidates:
+        c = c.strip().lower()
+        if c and c not in seen:
+            seen.add(c)
+            terms.append(c)
+    return terms
+
+
 def build_keywords(parts: Dict[str, str], tags: List[str],
                    rules: Dict[str, List[str]], synonyms: bool,
-                   hits: Dict[str, int], syn_min: int) -> str:
+                   hits: Dict[str, int], syn_min: int,
+                   site: str = "", base_url: str = "") -> str:
     """Inferred vocabulary. Indexed at weight 'D', the lowest.
 
     This is what lets "trucks" find the Volvo D13 viewer: the page never says
@@ -126,6 +180,7 @@ def build_keywords(parts: Dict[str, str], tags: List[str],
     parts_out = []
     if parts["keywords"]:
         parts_out.append(parts["keywords"])
+    parts_out.extend(site_terms(site, base_url))
     if tags:
         parts_out.append(", ".join(tags))
     if synonyms and tags:
@@ -147,7 +202,7 @@ def build_keywords(parts: Dict[str, str], tags: List[str],
 
 def collect(directory: str, rules: Dict[str, List[str]], site: str,
             base_url: str, server_name: str, synonyms: bool,
-            min_hits: int, syn_min: int) -> List[dict]:
+            min_hits: int, syn_min: int, clearance: int = 0) -> List[dict]:
     items = []
     for root, _, files in os.walk(directory):
         for fn in sorted(files):
@@ -175,7 +230,8 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 continue
 
             content = build_content(parts)
-            keywords = build_keywords(parts, tags, rules, synonyms, hits, syn_min)
+            keywords = build_keywords(parts, tags, rules, synonyms, hits,
+                                      syn_min, site, base_url)
             if not content.strip():
                 print(f"SKIP {rel} — no indexable text")
                 continue
@@ -184,6 +240,16 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
             if base_url:
                 url = base_url.rstrip("/") + "/" + rel.replace(os.sep, "/")
                 url = re.sub(r"/index\.html$", "/", url)
+
+            # Only the page's own og:image, made absolute. There is deliberately
+            # no fallback: a result with no artwork renders without artwork,
+            # rather than borrowing a picture that belongs to something else.
+            image = parts.get("image", "")
+            if image and not image.startswith(("http://", "https://", "data:")):
+                if base_url:
+                    image = base_url.rstrip("/") + "/" + image.lstrip("/")
+                else:
+                    image = ""
 
             items.append({
                 "serverName": server_name,
@@ -196,7 +262,12 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 "source": f"{site}:{rel.replace(os.sep, '/')}",
                 "tags": tags,
                 "status": "active",
-                "metadata": {"url": url, "path": rel, "site": site},
+                # 0 is world-readable; 10 restricts the page to level 10
+                # clearance. The API enforces it against a Keycloak role, so
+                # this is a real boundary, not a display hint.
+                "clearance": clearance,
+                "metadata": {"url": url, "path": rel, "site": site,
+                             **({"image": image} if image else {})},
             })
     return items
 
@@ -216,13 +287,17 @@ def main():
                     help="Distinct keywords needed before a tag's vocabulary is injected")
     ap.add_argument("--no-synonyms", action="store_true",
                     help="Do not expand matched tags into their rule vocabulary")
+    ap.add_argument("--clearance", type=int, default=0,
+                    help="Access level for every page in this feed: 0 public, "
+                         "10 = level 10 clearance (matomo, logger, locator, "
+                         "pgadmin and other infra surfaces)")
     ap.add_argument("--dry-run", action="store_true", help="Print payloads, send nothing")
     args = ap.parse_args()
 
     rules = load_tag_rules()
     items = collect(args.directory, rules, args.site, args.base_url,
                     args.server_name, not args.no_synonyms, args.min_hits,
-                    args.synonym_min_hits)
+                    args.synonym_min_hits, args.clearance)
     if not items:
         print("nothing to index")
         return
@@ -235,6 +310,7 @@ def main():
             print(f"    url  : {it['metadata']['url'] or '(none)'}")
             print(f"    content ({len(it['content'])} chars): {it['content'][:140]}...")
             print(f"    keywords: {it['keywords'][:140]}")
+            print(f"    clearance: {it['clearance']}")
         print(f"\nDRY RUN — {len(items)} page(s) would be pushed to {args.api}")
         return
 

@@ -83,11 +83,17 @@ export const searchableItems = pgTable(
     severity: varchar("severity", { length: 20 }),
     source: varchar("source", { length: 255 }),
     tags: text("tags").array(),
+    // Access level. 0 is world-readable; 10 is "level 10 clearance" — infra and
+    // telemetry surfaces (matomo, live-logger, locator, pgadmin) plus every
+    // non-document row, which name internal hosts and container ids. The API
+    // filters on this server-side: it is the access boundary, not a UI hint.
+    clearance: integer("clearance").notNull().default(0),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [
     index("category_idx").on(table.category),
+    index("clearance_idx").on(table.clearance),
     index("server_idx").on(table.serverId),
     index("status_idx").on(table.status),
     index("tags_idx").using("gin", table.tags),

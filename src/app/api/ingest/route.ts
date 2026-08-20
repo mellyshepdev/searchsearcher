@@ -39,6 +39,10 @@ interface IngestBody {
   status?: ItemStatus;
   severity?: string;
   metadata?: Record<string, unknown>;
+  // 0 = world-readable, 10 = level 10 clearance. Absent means public, so an
+  // existing feeder that has never heard of clearance cannot accidentally
+  // publish a restricted page.
+  clearance?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -99,6 +103,7 @@ export async function POST(request: NextRequest) {
     .limit(1);
 
   const metadata = body.metadata ? JSON.stringify(body.metadata) : null;
+  const clearance = Number.isFinite(body.clearance) ? Number(body.clearance) : 0;
 
   if (existing) {
     await db
@@ -110,6 +115,7 @@ export async function POST(request: NextRequest) {
         severity: body.severity ?? null,
         tags: body.tags ?? null,
         metadata,
+        clearance,
         updatedAt: new Date(),
       })
       .where(eq(searchableItems.id, existing.id));
@@ -129,6 +135,7 @@ export async function POST(request: NextRequest) {
       status: body.status ?? "active",
       severity: body.severity ?? null,
       metadata,
+      clearance,
     })
     .returning();
 

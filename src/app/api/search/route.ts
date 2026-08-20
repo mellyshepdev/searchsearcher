@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { searchableItems, servers } from "@/db/schema";
-import { sql, eq, and, or, ilike, SQL } from "drizzle-orm";
+import { sql, eq, and, or, ilike, lte, SQL } from "drizzle-orm";
 import type { ItemCategory, ItemStatus } from "@/types/search";
+import { clearanceFor, PUBLIC_CLEARANCE } from "@/lib/clearance";
 
 const VALID_CATEGORIES: ItemCategory[] = [
   "log",
@@ -44,6 +45,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // What this caller may read is decided from their bearer token, never from a
+  // parameter. Unauthenticated and unprivileged callers get public rows only —
+  // the browser is not trusted to filter, because it never could.
+  const { level, reason } = await clearanceFor(
+    request.headers.get("authorization")
+  );
+
   try {
     const results = await executeSearch(
       query,
@@ -51,10 +59,13 @@ export async function GET(request: NextRequest) {
       serverId,
       status,
       limit,
-      offset
+      offset,
+      level
     );
 
     return NextResponse.json({
+      clearance: level,
+      clearanceReason: level > PUBLIC_CLEARANCE ? undefined : reason,
       results: results.items.map((r) => ({
         ...r,
         metadata: r.metadata ? JSON.parse(r.metadata) : null,
@@ -73,9 +84,11 @@ export async function GET(request: NextRequest) {
         serverId,
         status,
         limit,
-        offset
+        offset,
+        level
       );
       return NextResponse.json({
+        clearance: level,
         results: results.items.map((r) => ({
           ...r,
           metadata: r.metadata ? JSON.parse(r.metadata) : null,
@@ -108,9 +121,10 @@ async function executeSearch(
   serverId: string,
   status: string,
   limit: number,
-  offset: number
+  offset: number,
+  maxClearance: number
 ) {
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [lte(searchableItems.clearance, maxClearance)];
   let rankExpr: SQL<number> | null = null;
 
   if (query) {
@@ -162,6 +176,7 @@ async function executeSearch(
       severity: searchableItems.severity,
       source: searchableItems.source,
       tags: searchableItems.tags,
+      clearance: searchableItems.clearance,
       createdAt: searchableItems.createdAt,
       serverId: searchableItems.serverId,
       serverName: servers.name,
@@ -193,9 +208,10 @@ async function executeFallbackSearch(
   serverId: string,
   status: string,
   limit: number,
-  offset: number
+  offset: number,
+  maxClearance: number
 ) {
-  const conditions: SQL[] = [];
+  const conditions: SQL[] = [lte(searchableItems.clearance, maxClearance)];
 
   if (query) {
     conditions.push(
@@ -240,6 +256,7 @@ async function executeFallbackSearch(
       severity: searchableItems.severity,
       source: searchableItems.source,
       tags: searchableItems.tags,
+      clearance: searchableItems.clearance,
       createdAt: searchableItems.createdAt,
       serverId: searchableItems.serverId,
       serverName: servers.name,
