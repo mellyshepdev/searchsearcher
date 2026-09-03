@@ -37,6 +37,7 @@ TAG_RULES = {
     "services": ["service", "consulting", "cleaning", "maintenance"],
     "diesel": ["fuel", "engine", "diesel", "vehicle", "tech", "truck", "18", "wheeler", "semi"],
     "training": ["training", "course", "school", "courses", "learning"],
+    "forge": [art, gimp, inkscape, blender, canvas, coloring, 3d, 3js]
 }
 
 # ---------- Compile regexes once ----------
