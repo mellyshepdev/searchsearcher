@@ -11,6 +11,7 @@ Usage:
 import os
 import re
 import html
+import json
 import sys
 import tempfile
 import argparse
@@ -37,7 +38,7 @@ TAG_RULES = {
     "services": ["service", "consulting", "cleaning", "maintenance"],
     "diesel": ["fuel", "engine", "diesel", "vehicle", "tech", "truck", "18", "wheeler", "semi"],
     "training": ["training", "course", "school", "courses", "learning"],
-    "forge": [art, gimp, inkscape, blender, canvas, coloring, 3d, 3js]
+    "forge": ["art", "gimp", "inkscape", "blender", "canvas", "coloring", "3d", "3js"],
 }
 
 # ---------- Compile regexes once ----------
@@ -235,8 +236,44 @@ def tag_html_files(directory: str, tags_for_file_fn=None, dry_run: bool = False,
                     print(f"No change {path} (tags: {keywords_str or ''})")
                     changed = False
 
-            results.append({"path": path, "changed": changed, "keywords": keywords_str or ""})
+            results.append({
+                "path": path,
+                "rel": os.path.relpath(path, directory).replace(os.sep, "/"),
+                "tags": list(matched_tags),
+                "changed": changed,
+                "keywords": keywords_str or "",
+            })
     return results
+
+# ---------- Tag file ----------
+# The machine-readable half of a run. autoweb.py (ser.ops) drives this script as
+# `TAGGER_CMD <site_dir>` and then hands the file it produces to the ingestor as
+# `INGESTOR_CMD <tag_file>`, so the two steps have to agree on a path and shape
+# without either one parsing stdout.
+TAG_FILE_VERSION = 1
+DEFAULT_TAG_FILE = ".tags.json"
+
+
+def build_tag_file(directory: str, results: List[dict], *, site: str = "",
+                   base_url: str = "", dry_run: bool = False) -> dict:
+    return {
+        "version": TAG_FILE_VERSION,
+        "generated": datetime.utcnow().isoformat() + "Z",
+        "directory": os.path.abspath(directory),
+        "site": site or os.path.basename(os.path.abspath(directory)),
+        "base_url": base_url,
+        "dry_run": dry_run,
+        "counts": {
+            "scanned": len(results),
+            "changed": sum(1 for r in results if r["changed"]),
+            "tagged": sum(1 for r in results if r["tags"]),
+        },
+        "files": [
+            {"path": r["rel"], "tags": r["tags"], "changed": r["changed"]}
+            for r in results
+        ],
+    }
+
 
 # ---------- CLI ----------
 def main():
@@ -246,6 +283,17 @@ def main():
     parser.add_argument("--pretty", action="store_true", help="Write prettified HTML (debug only)")
     parser.add_argument("--tags", "-t", help="Override tags for every file (comma-separated)")
     parser.add_argument("--max-len", type=int, default=1000, help="Max length for keywords meta content")
+    # Deliberately a bare flag, not an optional-value option: autoweb appends the
+    # site directory as the last argument, and a `nargs="?"` option would swallow
+    # it as its own value.
+    parser.add_argument("--json", action="store_true",
+                        help=f"Also write {DEFAULT_TAG_FILE} into the site directory")
+    parser.add_argument("--json-path", help="Write the tag file here instead")
+    parser.add_argument("--site", default="",
+                        help="Short site name recorded in the tag file "
+                             "(default: the site directory's name)")
+    parser.add_argument("--base-url", default="",
+                        help="Public base URL, recorded in the tag file for the ingestor")
     args = parser.parse_args()
 
     tags_override = None
@@ -263,6 +311,15 @@ def main():
     print(f"\nSummary: scanned {len(results)} files, updated {len(updated)} files")
     for r in updated:
         print(f" - {r['path']}: tags={r['keywords']}")
+
+    if args.json or args.json_path:
+        out = args.json_path or os.path.join(args.directory, DEFAULT_TAG_FILE)
+        doc = build_tag_file(args.directory, results, site=args.site,
+                             base_url=args.base_url, dry_run=args.dry_run)
+        # Written even on --dry-run: the file reports what *would* be tagged, and
+        # the ingestor's own --dry-run is what keeps the pipeline read-only.
+        atomic_write(out, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        print(f"Wrote {out} ({doc['counts']['tagged']}/{doc['counts']['scanned']} pages tagged)")
 
 if __name__ == "__main__":
     main()

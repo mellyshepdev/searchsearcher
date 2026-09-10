@@ -36,7 +36,16 @@ def load_tag_rules() -> Dict[str, List[str]]:
     directory, not an installable module.
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    tagger_path = os.path.join(here, "..", "tagger", "tagger.py")
+    # Two layouts have to work: this repo (tools/feeder + tools/tagger) and the
+    # flat one autoweb.py deploys to, where every script lands in ~/tools/.
+    candidates = [
+        os.path.join(here, "..", "tagger", "tagger.py"),
+        os.path.join(here, "tagger.py"),
+    ]
+    tagger_path = next((c for c in candidates if os.path.exists(c)), None)
+    if tagger_path is None:
+        raise SystemExit("cannot find tagger.py; looked in " +
+                         ", ".join(os.path.normpath(c) for c in candidates))
     spec = importlib.util.spec_from_file_location("tagger", tagger_path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot load tagger from {tagger_path}")

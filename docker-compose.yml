@@ -43,12 +43,20 @@ services:
       context: .
       dockerfile: Dockerfile
     image: searchsearcher-app:latest
-    container_name: searchsearcher-app
+    container_name: searchsearcher
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://searchsearcher:${DB_PASSWORD}@postgres:5432/searchsearcher
       NODE_ENV: production
       INGEST_TOKEN: ${INGEST_TOKEN}
+      # clearance.ts defaults to bsco-keycloak.fly.dev, but the fleet's realm
+      # (the one reech, live-logger and the dashboards authenticate against)
+      # lives here. Both are live and both answer for /realms/blacksheep, and
+      # they mint DIFFERENT `iss` claims. Leave this unset and jwtVerify rejects
+      # every token oauth2-proxy forwards, silently dropping every signed-in
+      # user to public clearance.
+      KEYCLOAK_ISSUER: https://auth.theofficialblacksheepco.com/realms/blacksheep
+      CLEARANCE_ROLE: ${CLEARANCE_ROLE:-clearance-10}
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,25 +65,65 @@ services:
     networks:
       - searchsearcher-internal
       - traefik_proxy
+    # No Traefik router of its own. The app is reachable only through
+    # searchsearcher-oauth, the same shape reech, live-logger and the
+    # dashboards use: Traefik -> oauth2-proxy -> upstream. A router here would
+    # be a second, unauthenticated front door onto the same container.
+    labels:
+      - "traefik.enable=false"
+
+  # Keycloak gate. oauth2-proxy runs as a reverse proxy (not forward-auth), so
+  # an unauthenticated request never reaches Next.js at all.
+  searchsearcher-oauth:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    container_name: searchsearcher-oauth
+    restart: unless-stopped
+    depends_on:
+      - app
+    command:
+      - --provider=oidc
+      - --oidc-issuer-url=https://auth.theofficialblacksheepco.com/realms/blacksheep
+      - --client-id=searchsearcher
+      - --client-secret=${SEARCHSEARCHER_OIDC_SECRET}
+      - --cookie-secret=${SEARCHSEARCHER_COOKIE_SECRET}
+      - --cookie-secure=true
+      - --cookie-domain=search.theofficialblacksheepco.com
+      - --cookie-name=_oauth2_searchsearcher
+      - --email-domain=*
+      - --upstream=http://app:3000
+      - --http-address=0.0.0.0:4180
+      - --redirect-url=https://search.theofficialblacksheepco.com/oauth2/callback
+      - --code-challenge-method=S256
+      - --skip-provider-button=true
+      - --insecure-oidc-allow-unverified-email=true
+      # clearance.ts reads the bearer token off the forwarded request; without
+      # these two the app sees no token and every user is public-clearance.
+      - --set-xauthrequest=true
+      - --pass-authorization-header=true
+      - --pass-user-headers=true
+      # API paths get a 401 rather than a login redirect, so a script gets an
+      # error it can read instead of a page of HTML.
+      - --api-route=^/api/
+      - --skip-auth-preflight=true
+      # The feeders (site_feeder.py, ingestor.py, autoweb.py) POST here with
+      # their own INGEST_TOKEN bearer, which Keycloak knows nothing about.
+      # Without this exemption the whole tagger -> ingestor pipeline 401s at
+      # the edge and never reaches the route that would have authorised it.
+      - --skip-auth-route=^/api/ingest$$
+      - --skip-auth-route=^/api/health$$
+    networks:
+      - searchsearcher-internal
+      - traefik_proxy
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik_proxy"
-      # HTTP -> HTTPS redirect. Redundant on unit7, whose Traefik already
-      # redirects at the entrypoint (entrypoints.web.http.redirections), but
-      # harmless and keeps this stack portable to a host that doesn't.
-      - "traefik.http.routers.searchsearcher-http.rule=Host(`search.theofficialblacksheepco.com`)"
-      - "traefik.http.routers.searchsearcher-http.entrypoints=web"
-      - "traefik.http.routers.searchsearcher-http.middlewares=searchsearcher-redirect"
-      - "traefik.http.middlewares.searchsearcher-redirect.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.searchsearcher-redirect.redirectscheme.permanent=true"
-      # HTTPS
       - "traefik.http.routers.searchsearcher-https.rule=Host(`search.theofficialblacksheepco.com`)"
       - "traefik.http.routers.searchsearcher-https.entrypoints=websecure"
       - "traefik.http.routers.searchsearcher-https.tls=true"
-      # unit7's Traefik names its ACME resolver "myresolver", not "letsencrypt".
+      # This Traefik names its ACME resolver "myresolver", not "letsencrypt".
       # A name that doesn't exist means no certificate is ever issued.
       - "traefik.http.routers.searchsearcher-https.tls.certresolver=myresolver"
-      - "traefik.http.services.searchsearcher.loadbalancer.server.port=3000"
+      - "traefik.http.services.searchsearcher.loadbalancer.server.port=4180"
 
 volumes:
   searchsearcher-postgres-data:
