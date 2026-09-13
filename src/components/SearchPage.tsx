@@ -15,10 +15,14 @@ export default function SearchPage() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [servers, setServers] = useState<ServerInfo[]>([]);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const reqSeq = useRef(0);
+  const PAGE_SIZE = 25;
 
   // Fetch servers and stats on mount
   useEffect(() => {
@@ -47,15 +51,32 @@ export default function SearchPage() {
   }, []);
 
   const performSearch = useCallback(
-    async (q: string, cat: string, srv: string, st: string) => {
+    async (
+      q: string,
+      cat: string,
+      srv: string,
+      st: string,
+      offset = 0,
+      append = false
+    ) => {
       if (!q.trim() && !cat && !srv) {
+        reqSeq.current++;
         setResults([]);
         setTotal(0);
+        setHasMore(false);
         setSearched(false);
+        setLoading(false);
+        setLoadingMore(false);
+        nextOffsetRef.current = 0;
         return;
       }
 
-      setLoading(true);
+      const seq = ++reqSeq.current;
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
       setSearched(true);
 
       try {
@@ -64,28 +85,69 @@ export default function SearchPage() {
         if (cat) params.set("category", cat);
         if (srv) params.set("serverId", srv);
         if (st) params.set("status", st);
-        params.set("limit", "100");
+        params.set("limit", String(PAGE_SIZE));
+        params.set("offset", String(offset));
 
         const res = await fetch(`/api/search?${params.toString()}`);
         const data = await res.json();
 
+        // A newer request superseded this one while it was in flight.
+        if (seq !== reqSeq.current) return;
+
         if (data.results) {
-          setResults(data.results);
+          const incoming: SearchResult[] = data.results;
+          setResults((prev) => {
+            const merged = append ? [...prev, ...incoming] : incoming;
+            const seen = new Set<number>();
+            return merged.filter((r) =>
+              seen.has(r.id) ? false : (seen.add(r.id), true)
+            );
+          });
           setTotal(data.total);
-        } else {
+          // Progress by rows fetched, not rows kept, so a deduped page can
+          // never wedge the pager on an overlapping offset.
+          const nextOffset = offset + incoming.length;
+          nextOffsetRef.current = nextOffset;
+          setHasMore(incoming.length > 0 && nextOffset < data.total);
+        } else if (!append) {
           setResults([]);
           setTotal(0);
+          setHasMore(false);
+          nextOffsetRef.current = 0;
+        } else {
+          setHasMore(false);
         }
       } catch (err) {
         console.error("Search error:", err);
-        setResults([]);
-        setTotal(0);
+        if (!append) {
+          setResults([]);
+          setTotal(0);
+          setHasMore(false);
+        }
       } finally {
-        setLoading(false);
+        if (seq === reqSeq.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
-    []
+    [PAGE_SIZE]
   );
+
+  const nextOffsetRef = useRef(0);
+  const loadMore = useCallback(() => {
+    if (loading || loadingMore || !hasMore) return;
+    performSearch(query, category, serverId, status, nextOffsetRef.current, true);
+  }, [
+    loading,
+    loadingMore,
+    hasMore,
+    performSearch,
+    query,
+    category,
+    serverId,
+    status,
+  ]);
 
   // Debounced search on query/filter changes
   useEffect(() => {
@@ -187,9 +249,12 @@ export default function SearchPage() {
             <ResultsList
               results={results}
               loading={loading}
+              loadingMore={loadingMore}
               searched={searched}
               query={query}
               total={total}
+              hasMore={hasMore}
+              onLoadMore={loadMore}
             />
           </div>
 

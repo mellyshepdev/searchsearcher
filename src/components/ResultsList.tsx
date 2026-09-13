@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CATEGORY_CONFIG,
   STATUS_CONFIG,
@@ -10,9 +10,12 @@ import type { SearchResult, ItemCategory, ItemStatus } from "@/types/search";
 interface ResultsListProps {
   results: SearchResult[];
   loading: boolean;
+  loadingMore: boolean;
   searched: boolean;
   query: string;
   total: number;
+  hasMore: boolean;
+  onLoadMore: () => void;
 }
 
 function highlightText(text: string, query: string): React.ReactNode {
@@ -64,12 +67,36 @@ function ResultCard({
   const statConfig = result.status
     ? STATUS_CONFIG[result.status as ItemStatus]
     : null;
+  const image =
+    typeof result.metadata?.image === "string" ? result.metadata.image : null;
+  const url =
+    typeof result.metadata?.url === "string" ? result.metadata.url : null;
 
   return (
     <div
       className="animate-fade-in group bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-xl hover:border-white/20 hover:bg-white/[0.06] transition-all duration-150"
     >
-      <div className="p-4">
+      <div className="p-4 flex gap-4">
+        {image && (
+          <a
+            href={url ?? image}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-shrink-0"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={image}
+              alt={result.title}
+              loading="lazy"
+              className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border border-white/10 bg-white/[0.04]"
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          </a>
+        )}
+        <div className="flex-1 min-w-0">
         {/* Top row: category badge, status, server, time */}
         <div className="flex flex-wrap items-center gap-2 mb-2">
           {catConfig && (
@@ -134,7 +161,18 @@ function ResultCard({
 
         {/* Title */}
         <h3 className="text-sm font-semibold text-white group-hover:text-sky-300 transition-colors">
-          {highlightText(result.title, query)}
+          {url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:underline"
+            >
+              {highlightText(result.title, query)}
+            </a>
+          ) : (
+            highlightText(result.title, query)
+          )}
         </h3>
 
         {/* Content preview */}
@@ -211,6 +249,7 @@ function ResultCard({
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
@@ -219,10 +258,31 @@ function ResultCard({
 export default function ResultsList({
   results,
   loading,
+  loadingMore,
   searched,
   query,
   total,
+  hasMore,
+  onLoadMore,
 }: ResultsListProps) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  // Infinite scroll: when the sentinel nears the viewport, ask for the next
+  // page. The observer is re-created when the result set changes so a fresh
+  // batch immediately re-arms it.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore();
+      },
+      { rootMargin: "400px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, results.length]);
+
   // Loading skeleton
   if (loading) {
     return (
@@ -357,10 +417,35 @@ export default function ResultsList({
         ))}
       </div>
 
-      {total > results.length && (
+      {/* Sentinel watched by the IntersectionObserver above */}
+      <div ref={sentinelRef} className="h-px" />
+
+      {loadingMore && (
+        <div className="space-y-3">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div
+              key={i}
+              className="bg-white/[0.04] border border-white/10 rounded-xl p-4"
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <div className="skeleton w-16 h-5 rounded-md" />
+                <div className="skeleton w-14 h-5 rounded-md" />
+              </div>
+              <div className="skeleton w-3/4 h-5 rounded mb-2" />
+              <div className="skeleton w-full h-4 rounded" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {total > results.length && !loadingMore && (
         <div className="text-center py-4 text-sm text-white/50">
-          Showing {results.length} of {total} results. Refine your search for
-          more specific results.
+          Showing {results.length} of {total} results — scroll for more.
+        </div>
+      )}
+      {total > 0 && results.length >= total && (
+        <div className="text-center py-4 text-sm text-white/35">
+          All {total} results loaded.
         </div>
       )}
     </div>
