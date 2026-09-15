@@ -132,8 +132,16 @@ async function executeSearch(
     // every keystroke, no submit/Enter surface exists yet), so websearch_to_tsquery's phrase
     // parsing doesn't apply here; if a submit-on-Enter surface is added later, that's the mode
     // to use websearch_to_tsquery for instead.
+    // Split on any run of non-alphanumeric characters, not just whitespace:
+    // a bare word like "tech-estate" produced the single token "tech-estate:*",
+    // which to_tsquery rejects outright (Postgres error 42601, tsquery.c
+    // makepol) - every hyphenated/punctuated query silently fell through to
+    // the ILIKE fallback below instead of actually ranking. Splitting into
+    // separate ANDed prefix terms ("tech:* & estate:*") also matches more
+    // real content, since compound service names are not always hyphenated
+    // the same way in the text being searched.
     const tsQuery = query
-      .split(/\s+/)
+      .split(/[^a-zA-Z0-9]+/)
       .filter(Boolean)
       .map((w) => `${w}:*`)
       .join(" & ");

@@ -43,7 +43,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: searchsearcher-app:latest
-    container_name: searchsearcher
+    container_name: searchsearcher-app
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://searchsearcher:${DB_PASSWORD}@postgres:5432/searchsearcher
