@@ -68,30 +68,58 @@ function ResultCard({
     ? STATUS_CONFIG[result.status as ItemStatus]
     : null;
   const image =
-    typeof result.metadata?.image === "string" ? result.metadata.image : null;
+    typeof result.metadata?.image === "string" && result.metadata.image.trim()
+      ? result.metadata.image.trim()
+      : null;
   const url =
     typeof result.metadata?.url === "string" ? result.metadata.url : null;
+
+  // Candidates in order: the page's own artwork, then the site's icon (the
+  // feeder's declared one, else the favicon where the result's own URL
+  // points). A borrowed picture is never offered; a dead link just advances
+  // the chain, and a site with no favicon ends it — the card renders bare.
+  const [thumbIdx, setThumbIdx] = useState(0);
+  const [thumbDead, setThumbDead] = useState(false);
+  const iconCandidates: string[] = [];
+  if (typeof result.metadata?.icon === "string" && result.metadata.icon.trim())
+    iconCandidates.push(result.metadata.icon.trim());
+  if (url && /^https?:\/\//i.test(url)) {
+    try {
+      iconCandidates.push(new URL(url).origin + "/favicon.ico");
+    } catch {
+      /* not a parseable URL — no icon to offer */
+    }
+  }
+  const seen = new Set<string>();
+  const candidates = [
+    ...(image ? [{ src: image, isIcon: false }] : []),
+    ...iconCandidates.map((src) => ({ src, isIcon: true })),
+  ].filter((c) => (seen.has(c.src) ? false : (seen.add(c.src), true)));
+  const thumb = thumbDead ? null : candidates[thumbIdx] ?? null;
 
   return (
     <div
       className="animate-fade-in group bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-xl hover:border-white/20 hover:bg-white/[0.06] transition-all duration-150"
     >
       <div className="p-4 flex gap-4">
-        {image && (
+        {thumb && (
           <a
-            href={url ?? image}
+            href={url ?? thumb.src}
             target="_blank"
             rel="noopener noreferrer"
             className="flex-shrink-0"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={image}
+              src={thumb.src}
               alt={result.title}
               loading="lazy"
-              className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg object-cover border border-white/10 bg-white/[0.04]"
-              onError={(e) => {
-                e.currentTarget.style.display = "none";
+              className={`w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-white/[0.04] ${
+                thumb.isIcon ? "object-contain p-3" : "object-cover"
+              }`}
+              onError={() => {
+                if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);
+                else setThumbDead(true);
               }}
             />
           </a>

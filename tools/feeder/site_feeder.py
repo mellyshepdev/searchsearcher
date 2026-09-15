@@ -19,6 +19,7 @@ import os
 import re
 import sys
 from typing import Dict, List
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -79,6 +80,33 @@ def strip_chrome(soup: BeautifulSoup) -> None:
         tag.decompose()
 
 
+# Filenames that are chrome, not content — the first <img> on a page is often a
+# tracking pixel or UI glyph, which would illustrate the result with the site's
+# plumbing instead of the page's subject.
+IMG_CHROME_RE = re.compile(
+    r"(^|[\s_/-])(icon|logo|sprite|spacer|pixel|1x1|blank|avatar|flag)"
+    r"([\s_/.-]|$)", re.I)
+
+
+def first_content_img(soup: BeautifulSoup) -> str:
+    """The first real <img> left after chrome stripping — the page's own
+    picture, on the page. Skips data: URIs and images that declare themselves
+    tiny (icon/spacer dimensions) or carry chrome filenames."""
+    for el in soup.find_all("img"):
+        src = (el.get("src") or "").strip()
+        if not src or src.startswith("data:") or IMG_CHROME_RE.search(src):
+            continue
+        try:
+            w = int(el.get("width") or 0)
+            h = int(el.get("height") or 0)
+        except (TypeError, ValueError):
+            w = h = 0
+        if 0 < max(w, h) < 48:
+            continue
+        return src
+    return ""
+
+
 def page_text(soup: BeautifulSoup) -> Dict[str, str]:
     """Everything worth indexing on a page.
 
@@ -99,15 +127,27 @@ def page_text(soup: BeautifulSoup) -> Dict[str, str]:
         title = soup.title.string.strip()
     title = title or meta("og:title", "twitter:title")
 
+    # Artwork chain, most specific first: the author's og:image, then the
+    # page's own first content image. The site's icon travels separately under
+    # "icon" — it is the site's mark, not the page's subject, and renderers
+    # display it differently (contained, not cover-cropped). No image is ever
+    # borrowed from a *different* page.
     image = meta("og:image", "twitter:image")
+    icon_link = soup.find("link", attrs={"rel": re.compile(
+        r"(^|\s)(shortcut\s+)?icon(\s|$)|apple-touch-icon", re.I)})
+    icon = (icon_link.get("href") or "").strip() if icon_link else ""
 
     strip_chrome(soup)
+    if not image:
+        image = first_content_img(soup)
+
     body = soup.body.get_text(" ", strip=True) if soup.body else ""
     return {
         "title": title,
         "description": meta("description", "og:description", "twitter:description"),
         "keywords": meta("keywords"),
         "image": image,
+        "icon": icon,
         "body": re.sub(r"\s+", " ", body).strip(),
     }
 
@@ -250,15 +290,21 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 url = base_url.rstrip("/") + "/" + rel.replace(os.sep, "/")
                 url = re.sub(r"/index\.html$", "/", url)
 
-            # Only the page's own og:image, made absolute. There is deliberately
-            # no fallback: a result with no artwork renders without artwork,
-            # rather than borrowing a picture that belongs to something else.
-            image = parts.get("image", "")
-            if image and not image.startswith(("http://", "https://", "data:")):
-                if base_url:
-                    image = base_url.rstrip("/") + "/" + image.lstrip("/")
-                else:
-                    image = ""
+            # The page's own artwork, made absolute — resolved against the
+            # page's own URL, not the base: a src of "media/x.jpg" on
+            # html/foo.html means /html/media/x.jpg, and "../x.jpg" needs
+            # normalising, not concatenating.
+            def absolutize(src: str) -> str:
+                if not src:
+                    return ""
+                if src.startswith("//"):
+                    return "https:" + src
+                if src.startswith(("http://", "https://", "data:")):
+                    return src
+                return urljoin(url or (base_url + "/"), src) if base_url else ""
+
+            image = absolutize(parts.get("image", ""))
+            icon = absolutize(parts.get("icon", ""))
 
             items.append({
                 "serverName": server_name,
@@ -276,7 +322,8 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
                 # this is a real boundary, not a display hint.
                 "clearance": clearance,
                 "metadata": {"url": url, "path": rel, "site": site,
-                             **({"image": image} if image else {})},
+                             **({"image": image} if image else {}),
+                             **({"icon": icon} if icon else {})},
             })
     return items
 
@@ -317,6 +364,8 @@ def main():
             print(f"    title: {it['title']}")
             print(f"    tags : {', '.join(it['tags']) or '(none)'}")
             print(f"    url  : {it['metadata']['url'] or '(none)'}")
+            print(f"    image: {it['metadata'].get('image') or '(none)'}")
+            print(f"    icon : {it['metadata'].get('icon') or '(none)'}")
             print(f"    content ({len(it['content'])} chars): {it['content'][:140]}...")
             print(f"    keywords: {it['keywords'][:140]}")
             print(f"    clearance: {it['clearance']}")
