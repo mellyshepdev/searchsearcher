@@ -62,6 +62,24 @@ function ResultCard({
   query: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
+
+  // Reveal the thumbnail as the card scrolls into view — fires on entry
+  // and exit in both directions, so scrolling back up replays it.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) setInView(e.isIntersecting);
+      },
+      { threshold: 0.12 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const catConfig =
     CATEGORY_CONFIG[result.category as ItemCategory];
   const statConfig = result.status
@@ -96,34 +114,49 @@ function ResultCard({
     ...iconCandidates.map((src) => ({ src, isIcon: true })),
   ].filter((c) => (seen.has(c.src) ? false : (seen.add(c.src), true)));
   const thumb = thumbDead ? null : candidates[thumbIdx] ?? null;
+  const initial = (result.title || "?").trim().charAt(0).toUpperCase() || "?";
 
   return (
     <div
+      ref={cardRef}
       className="animate-fade-in group bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-xl hover:border-white/20 hover:bg-white/[0.06] transition-all duration-150"
     >
       <div className="p-4 flex gap-4">
-        {thumb && (
-          <a
-            href={url ?? thumb.src}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-shrink-0"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={thumb.src}
-              alt={result.title}
-              loading="lazy"
-              className={`w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-white/[0.04] ${
-                thumb.isIcon ? "object-contain p-3" : "object-cover"
-              }`}
-              onError={() => {
-                if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);
-                else setThumbDead(true);
-              }}
-            />
-          </a>
-        )}
+        <div
+          className={`flex-shrink-0 transition-all duration-500 ease-out ${
+            inView
+              ? "opacity-100 translate-y-0 scale-100"
+              : "opacity-0 translate-y-3 scale-95"
+          }`}
+        >
+          {thumb ? (
+            <a
+              href={url ?? thumb.src}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumb.src}
+                alt={result.title}
+                loading="lazy"
+                className={`w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-white/[0.04] ${
+                  thumb.isIcon ? "object-contain p-3" : "object-cover"
+                }`}
+                onError={() => {
+                  if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);
+                  else setThumbDead(true);
+                }}
+              />
+            </a>
+          ) : (
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-gradient-to-br from-sky-500/15 to-white/[0.04] flex items-center justify-center">
+              <span className="text-2xl font-bold text-white/30 select-none">
+                {initial}
+              </span>
+            </div>
+          )}
+        </div>
         <div className="flex-1 min-w-0">
         {/* Top row: category badge, status, server, time */}
         <div className="flex flex-wrap items-center gap-2 mb-2">
