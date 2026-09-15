@@ -53,6 +53,35 @@ function hasRole(payload: JWTPayload): boolean {
 }
 
 /**
+ * Numeric clearance carried by the token. The rest of the ecosystem reads a
+ * `clearance_level` claim (the hub shows "Clearance L<n>" from it), so it wins
+ * when present. Otherwise roles named `clearance-N` are scanned and the
+ * highest N is used — `clearance-10` is the long-standing level-10 grant.
+ */
+function levelFromClaims(payload: JWTPayload): number {
+  const claim = payload.clearance_level ?? payload.clearanceLevel;
+  const n = typeof claim === "string" ? parseInt(claim, 10) : claim;
+  if (typeof n === "number" && Number.isFinite(n)) {
+    return Math.max(PUBLIC_CLEARANCE, Math.min(LEVEL_10, Math.floor(n)));
+  }
+
+  const roles = [
+    ...((payload.realm_access as { roles?: string[] } | undefined)?.roles ?? []),
+    ...Object.values(
+      (payload.resource_access as
+        | Record<string, { roles?: string[] }>
+        | undefined) ?? {}
+    ).flatMap((r) => r?.roles ?? []),
+  ];
+  let max = 0;
+  for (const role of roles) {
+    const m = /^clearance-(\d+)$/.exec(role);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return Math.min(LEVEL_10, max);
+}
+
+/**
  * The highest clearance this request may read. Any failure — missing header,
  * bad signature, wrong issuer, expired, no role — degrades to public rather
  * than erroring, so an expired session quietly shows public results instead of
@@ -70,6 +99,10 @@ export async function clearanceFor(
 
   try {
     const { payload } = await jwtVerify(token, keyset(), { issuer: ISSUER });
+    const level = levelFromClaims(payload);
+    if (level > PUBLIC_CLEARANCE) {
+      return { level, subject: payload.sub };
+    }
     if (!hasRole(payload)) {
       return {
         level: PUBLIC_CLEARANCE,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { searchableItems, servers } from "@/db/schema";
-import { sql, eq, and, or, ilike, lte, SQL } from "drizzle-orm";
+import { sql, eq, ne, and, or, ilike, lte, SQL } from "drizzle-orm";
 import type { ItemCategory, ItemStatus } from "@/types/search";
 import { clearanceFor, PUBLIC_CLEARANCE } from "@/lib/clearance";
 
@@ -17,6 +17,10 @@ const VALID_CATEGORIES: ItemCategory[] = [
   "service",
   "database",
 ];
+
+// Log-category rows never surface below this level regardless of their own
+// clearance column — server logs are ops data, not public content.
+export const LOG_MIN_CLEARANCE = 6;
 
 const VALID_STATUSES: ItemStatus[] = [
   "active",
@@ -125,6 +129,9 @@ async function executeSearch(
   maxClearance: number
 ) {
   const conditions: SQL[] = [lte(searchableItems.clearance, maxClearance)];
+  if (maxClearance < LOG_MIN_CLEARANCE) {
+    conditions.push(ne(searchableItems.category, "log"));
+  }
   let rankExpr: SQL<number> | null = null;
 
   if (query) {
@@ -220,6 +227,9 @@ async function executeFallbackSearch(
   maxClearance: number
 ) {
   const conditions: SQL[] = [lte(searchableItems.clearance, maxClearance)];
+  if (maxClearance < LOG_MIN_CLEARANCE) {
+    conditions.push(ne(searchableItems.category, "log"));
+  }
 
   if (query) {
     conditions.push(
