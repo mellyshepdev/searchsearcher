@@ -158,7 +158,7 @@ def main():
     for it in items:
         try:
             r = requests.post(f"{args.api}/api/ingest", json=it, timeout=30,
-                              headers={"Authorization": f"Bearer {args.token}"})
+                              headers={"Authorization": f"Bearer {args.token}", "X-Ingest-Token": args.token})
             if r.status_code == 200:
                 ok += 1
             else:

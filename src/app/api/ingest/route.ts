@@ -46,8 +46,13 @@ interface IngestBody {
 }
 
 export async function POST(request: NextRequest) {
+  // oauth2-proxy overwrites Authorization even on --skip-auth-route paths
+  // (--pass-authorization-header), so feeders also send X-Ingest-Token,
+  // which the proxy forwards untouched.
   const auth = request.headers.get("authorization");
-  if (auth !== `Bearer ${process.env.INGEST_TOKEN}`) {
+  const ingestHeader = request.headers.get("x-ingest-token");
+  if (auth !== `Bearer ${process.env.INGEST_TOKEN}` &&
+      ingestHeader !== process.env.INGEST_TOKEN) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

@@ -166,7 +166,7 @@ def main():
         else:
             try:
                 r = requests.post(f"{api}/api/ingest", json=it, timeout=30,
-                                  headers={"Authorization": f"Bearer {args.token}"})
+                                  headers={"Authorization": f"Bearer {args.token}", "X-Ingest-Token": args.token})
                 row["http_status"] = r.status_code
                 if r.status_code == 200:
                     ok += 1

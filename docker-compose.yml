@@ -111,6 +111,10 @@ services:
       # the edge and never reaches the route that would have authorised it.
       - --skip-auth-route=^/api/ingest$$
       - --skip-auth-route=^/api/health$$
+      # The main site's search bar calls /api/search for every visitor,
+      # signed in or not. Tokenless requests reach the app as public
+      # clearance; the app still gates restricted hits off the bearer token.
+      - --skip-auth-route=^/api/search$$
     networks:
       - searchsearcher-internal
       - traefik_proxy
