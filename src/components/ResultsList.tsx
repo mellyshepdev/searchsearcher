@@ -57,28 +57,13 @@ function timeAgo(dateStr: string): string {
 function ResultCard({
   result,
   query,
+  isTop,
 }: {
   result: SearchResult;
   query: string;
+  isTop: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const [inView, setInView] = useState(false);
-
-  // Reveal the thumbnail as the card scrolls into view — fires on entry
-  // and exit in both directions, so scrolling back up replays it.
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) setInView(e.isIntersecting);
-      },
-      { threshold: 0.12 }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   const catConfig =
     CATEGORY_CONFIG[result.category as ItemCategory];
@@ -103,7 +88,9 @@ function ResultCard({
     iconCandidates.push(result.metadata.icon.trim());
   if (url && /^https?:\/\//i.test(url)) {
     try {
-      iconCandidates.push(new URL(url).origin + "/favicon.ico");
+      const origin = new URL(url).origin;
+      iconCandidates.push(origin + "/apple-touch-icon.png");
+      iconCandidates.push(origin + "/favicon.ico");
     } catch {
       /* not a parseable URL — no icon to offer */
     }
@@ -115,21 +102,42 @@ function ResultCard({
   ].filter((c) => (seen.has(c.src) ? false : (seen.add(c.src), true)));
   const thumb = thumbDead ? null : candidates[thumbIdx] ?? null;
   const initial = (result.title || "?").trim().charAt(0).toUpperCase() || "?";
+  // Only the top three results get imagery: real artwork becomes a banner
+  // strip across the card top (hard-capped in height); an icon-only result
+  // keeps it in the side slot. Every other card is text + placeholder.
+  const banner = isTop && thumb !== null && !thumb.isIcon;
+  const sideThumb = isTop && !banner && thumb !== null;
+  const thumbCls = "w-14 h-14";
+  const advanceThumb = () => {
+    if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);
+    else setThumbDead(true);
+  };
 
   return (
     <div
-      ref={cardRef}
       className="animate-fade-in group bg-white/[0.04] backdrop-blur-xl border border-white/10 rounded-xl hover:border-white/20 hover:bg-white/[0.06] transition-all duration-150"
     >
-      <div className="p-4 flex gap-4">
-        <div
-          className={`flex-shrink-0 transition-all duration-500 ease-out ${
-            inView
-              ? "opacity-100 translate-y-0 scale-100"
-              : "opacity-0 translate-y-3 scale-95"
-          }`}
+      {/* Banner image for the top results — uniform strip, capped at 128px */}
+      {banner && thumb && (
+        <a
+          href={url ?? thumb.src}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block"
         >
-          {thumb ? (
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={thumb.src}
+            alt={result.title}
+            loading="lazy"
+            className="w-full h-32 object-cover bg-white/[0.04]"
+            onError={advanceThumb}
+          />
+        </a>
+      )}
+      <div className="p-4 flex gap-4">
+        <div className="flex-shrink-0">
+          {sideThumb && thumb ? (
             <a
               href={url ?? thumb.src}
               target="_blank"
@@ -140,17 +148,14 @@ function ResultCard({
                 src={thumb.src}
                 alt={result.title}
                 loading="lazy"
-                className={`w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-white/[0.04] ${
-                  thumb.isIcon ? "object-contain p-3" : "object-cover"
+                className={`${thumbCls} rounded-lg border border-white/10 bg-white/[0.04] ${
+                  thumb.isIcon ? "object-contain p-2" : "object-cover"
                 }`}
-                onError={() => {
-                  if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);
-                  else setThumbDead(true);
-                }}
+                onError={advanceThumb}
               />
             </a>
           ) : (
-            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-lg border border-white/10 bg-gradient-to-br from-sky-500/15 to-white/[0.04] flex items-center justify-center">
+            <div className={`${thumbCls} rounded-lg border border-white/10 bg-gradient-to-br from-sky-500/15 to-white/[0.04] flex items-center justify-center`}>
               <span className="text-2xl font-bold text-white/30 select-none">
                 {initial}
               </span>
@@ -473,8 +478,13 @@ export default function ResultsList({
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        {results.map((result) => (
-          <ResultCard key={result.id} result={result} query={query} />
+        {results.map((result, i) => (
+          <ResultCard
+            key={result.id}
+            result={result}
+            query={query}
+            isTop={i < 3}
+          />
         ))}
       </div>
 
