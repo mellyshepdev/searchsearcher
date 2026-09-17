@@ -120,10 +120,24 @@ services:
       - "traefik.http.routers.searchsearcher-https.rule=Host(`search.theofficialblacksheepco.com`)"
       - "traefik.http.routers.searchsearcher-https.entrypoints=websecure"
       - "traefik.http.routers.searchsearcher-https.tls=true"
-      # This Traefik names its ACME resolver "myresolver", not "letsencrypt".
-      # A name that doesn't exist means no certificate is ever issued.
-      - "traefik.http.routers.searchsearcher-https.tls.certresolver=myresolver"
+      # No certresolver: search.… terminates at unit9's edge while the fleet
+      # is on failover, so TLS-ALPN here can never authorize — it was burning
+      # LE rate-limit budget. Re-add certresolver=myresolver if DNS returns.
       - "traefik.http.services.searchsearcher.loadbalancer.server.port=4180"
+
+  # Publishes oauth2-proxy on the tailnet at 100.99.131.20:4180 — unit9's
+  # nginx edge proxies search.theofficialblacksheepco.com through it.
+  # Was an ad-hoc `docker run`; kept getting swept by compose orphan
+  # handling, so it's a managed service now.
+  oauth-pub:
+    image: alpine/socat
+    container_name: searchsearcher-oauth-pub
+    restart: unless-stopped
+    command: ["TCP-LISTEN:4180,fork,reuseaddr", "TCP:searchsearcher-oauth:4180"]
+    ports:
+      - "100.99.131.20:4180:4180"
+    networks:
+      - searchsearcher-internal
 
 volumes:
   searchsearcher-postgres-data:
