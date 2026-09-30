@@ -17,12 +17,13 @@ export const LEVEL_10 = 10;
 // signups.
 const CLEARANCE_ROLE = process.env.CLEARANCE_ROLE || "clearance-10";
 
-// bsco-keycloak.fly.dev is the instance actually serving the `blacksheep`
-// realm. auth.theofficialblacksheepco.online answers, but returns
-// "Realm does not exist" — do not point this at it.
+// The `blacksheep` realm is served by the self-hosted instance at
+// auth.theofficialblacksheepco.com. The old bsco-keycloak.fly.dev app is
+// retired — its tokens minted a different `iss` string and would fail
+// validation here anyway.
 const ISSUER =
   process.env.KEYCLOAK_ISSUER ||
-  "https://bsco-keycloak.fly.dev/realms/blacksheep";
+  "https://auth.theofficialblacksheepco.com/realms/blacksheep";
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
