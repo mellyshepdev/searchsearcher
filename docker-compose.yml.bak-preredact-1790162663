@@ -1,9 +1,3 @@
-x-bao-secrets:
-  DB_PASSWORD: bao://secret/compose/units/unit7/searchsearcher#DB_PASSWORD
-  INGEST_TOKEN: bao://secret/compose/units/unit7/searchsearcher#INGEST_TOKEN
-  SEARCHSEARCHER_COOKIE_SECRET: bao://secret/compose/units/unit7/searchsearcher#SEARCHSEARCHER_COOKIE_SECRET
-  SEARCHSEARCHER_OIDC_SECRET: bao://secret/compose/units/unit7/searchsearcher#SEARCHSEARCHER_OIDC_SECRET
-
 services:
 
   postgres:
@@ -50,8 +44,6 @@ services:
       dockerfile: Dockerfile
     image: searchsearcher-app:latest
     container_name: searchsearcher-app
-    ports:
-      - "100.99.131.20:8219:3000"
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://searchsearcher:${DB_PASSWORD}@postgres:5432/searchsearcher
@@ -85,8 +77,6 @@ services:
   searchsearcher-oauth:
     image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: searchsearcher-oauth
-    ports:
-      - "100.99.131.20:8214:4180"
     restart: unless-stopped
     depends_on:
       - app
