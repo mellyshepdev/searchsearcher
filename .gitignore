@@ -5,3 +5,4 @@ node_modules/
 .next/
 tsconfig.tsbuildinfo
 __pycache__/
+tools/feeder/product_feed.log
