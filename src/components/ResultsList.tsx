@@ -102,11 +102,12 @@ function ResultCard({
   ].filter((c) => (seen.has(c.src) ? false : (seen.add(c.src), true)));
   const thumb = thumbDead ? null : candidates[thumbIdx] ?? null;
   const initial = (result.title || "?").trim().charAt(0).toUpperCase() || "?";
-  // Only the top three results get imagery: real artwork becomes a banner
-  // strip across the card top (hard-capped in height); an icon-only result
-  // keeps it in the side slot. Every other card is text + placeholder.
+  // The top three results get a banner strip when they have real artwork
+  // (hard-capped in height); every other result — and an icon-only top one —
+  // shows its picture in the side slot, so the list reads as images rather
+  // than a column of site icons and letters.
   const banner = isTop && thumb !== null && !thumb.isIcon;
-  const sideThumb = isTop && !banner && thumb !== null;
+  const sideThumb = !banner && thumb !== null;
   const thumbCls = "w-14 h-14";
   const advanceThumb = () => {
     if (thumbIdx + 1 < candidates.length) setThumbIdx(thumbIdx + 1);

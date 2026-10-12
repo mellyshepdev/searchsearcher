@@ -18,7 +18,7 @@ import json
 import os
 import re
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
 import requests
@@ -84,7 +84,7 @@ def strip_chrome(soup: BeautifulSoup) -> None:
 # tracking pixel or UI glyph, which would illustrate the result with the site's
 # plumbing instead of the page's subject.
 IMG_CHROME_RE = re.compile(
-    r"(^|[\s_/-])(icon|logo|sprite|spacer|pixel|1x1|blank|avatar|flag)"
+    r"(^|[\s_/-])(favicon|icon|logo|sprite|spacer|pixel|1x1|blank|avatar|flag)"
     r"([\s_/.-]|$)", re.I)
 
 
@@ -251,7 +251,8 @@ def build_keywords(parts: Dict[str, str], tags: List[str],
 
 def collect(directory: str, rules: Dict[str, List[str]], site: str,
             base_url: str, server_name: str, synonyms: bool,
-            min_hits: int, syn_min: int, clearance: int = 0) -> List[dict]:
+            min_hits: int, syn_min: int, clearance: int = 0,
+            image_map: Optional[dict] = None) -> List[dict]:
     items = []
     for root, _, files in os.walk(directory):
         for fn in sorted(files):
@@ -305,6 +306,16 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
 
             image = absolutize(parts.get("image", ""))
             icon = absolutize(parts.get("icon", ""))
+            # Pages with no artwork of their own take the curated one from the
+            # --image-map (per page, else the map's default), so results show
+            # a picture instead of falling back to the site icon. Site-relative
+            # paths resolve against the base URL, not the page.
+            if not image and image_map:
+                key = rel.replace(os.sep, "/")
+                mapped = (image_map.get("pages") or {}).get(key) or image_map.get("default") or ""
+                if mapped.startswith("/") and base_url:
+                    mapped = base_url.rstrip("/") + mapped
+                image = absolutize(mapped)
 
             items.append({
                 "serverName": server_name,
@@ -347,13 +358,20 @@ def main():
                     help="Access level for every page in this feed: 0 public, "
                          "10 = level 10 clearance (matomo, logger, locator, "
                          "pgadmin and other infra surfaces)")
+    ap.add_argument("--image-map", default="",
+                    help="JSON {default, pages:{rel path: image}} — artwork for "
+                         "pages with no og:image or content <img> of their own")
     ap.add_argument("--dry-run", action="store_true", help="Print payloads, send nothing")
     args = ap.parse_args()
 
     rules = load_tag_rules()
+    image_map = None
+    if args.image_map:
+        with open(args.image_map, encoding="utf-8") as fh:
+            image_map = json.load(fh)
     items = collect(args.directory, rules, args.site, args.base_url,
                     args.server_name, not args.no_synonyms, args.min_hits,
-                    args.synonym_min_hits, args.clearance)
+                    args.synonym_min_hits, args.clearance, image_map)
     if not items:
         print("nothing to index")
         return
