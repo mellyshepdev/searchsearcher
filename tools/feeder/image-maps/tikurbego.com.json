@@ -1,0 +1,8 @@
+{
+  "_comment": "Curated search-result artwork per Tikur Bego page (the shared og-card otherwise shows on every result). Paths are site-relative.",
+  "pages": {
+    "index.html": "/images/og-card.jpg",
+    "heritage.html": "/images/w22.jpg",
+    "contact.html": "/images/signature2.jpg"
+  }
+}

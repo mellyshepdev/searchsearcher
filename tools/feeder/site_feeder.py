@@ -306,13 +306,16 @@ def collect(directory: str, rules: Dict[str, List[str]], site: str,
 
             image = absolutize(parts.get("image", ""))
             icon = absolutize(parts.get("icon", ""))
-            # Pages with no artwork of their own take the curated one from the
-            # --image-map (per page, else the map's default), so results show
-            # a picture instead of falling back to the site icon. Site-relative
-            # paths resolve against the base URL, not the page.
-            if not image and image_map:
+            # --image-map artwork, site-relative paths resolved against the
+            # base URL. A page listed in "pages" always takes its curated
+            # picture, even over its own og:image/<img> (often a banner shared
+            # by many pages, so results all looked alike). Unlisted pages keep
+            # their own image and fall back to the map's default.
+            mapped = ""
+            if image_map:
                 key = rel.replace(os.sep, "/")
-                mapped = (image_map.get("pages") or {}).get(key) or image_map.get("default") or ""
+                mapped = (image_map.get("pages") or {}).get(key) or ("" if image else image_map.get("default") or "")
+            if mapped:
                 if mapped.startswith("/") and base_url:
                     mapped = base_url.rstrip("/") + mapped
                 image = absolutize(mapped)
