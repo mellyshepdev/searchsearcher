@@ -101,6 +101,11 @@ function ResultCard({
     ...iconCandidates.map((src) => ({ src, isIcon: true })),
   ].filter((c) => (seen.has(c.src) ? false : (seen.add(c.src), true)));
   const thumb = thumbDead ? null : candidates[thumbIdx] ?? null;
+  // Trading-card results carry a full card image (tall portrait); cover-crop
+  // would show only a slice, so cards get contain + a taller banner instead.
+  const isCard =
+    typeof result.metadata?.cardId === "string" &&
+    result.metadata.cardId.trim() !== "";
   const initial = (result.title || "?").trim().charAt(0).toUpperCase() || "?";
   // The top three results get a banner strip when they have real artwork
   // (hard-capped in height); every other result — and an icon-only top one —
@@ -131,7 +136,9 @@ function ResultCard({
             src={thumb.src}
             alt={result.title}
             loading="lazy"
-            className="w-full h-32 object-cover bg-white/[0.04]"
+            className={`w-full bg-white/[0.04] ${
+              isCard ? "h-48 object-contain" : "h-32 object-cover"
+            }`}
             onError={advanceThumb}
           />
         </a>
@@ -150,7 +157,7 @@ function ResultCard({
                 alt={result.title}
                 loading="lazy"
                 className={`${thumbCls} rounded-lg border border-white/10 bg-white/[0.04] ${
-                  thumb.isIcon ? "object-contain p-2" : "object-cover"
+                  thumb.isIcon || isCard ? "object-contain p-1" : "object-cover"
                 }`}
                 onError={advanceThumb}
               />
