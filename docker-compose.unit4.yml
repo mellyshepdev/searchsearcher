@@ -1,3 +1,9 @@
+x-bao-secrets:
+  DB_PASSWORD: bao://secret/compose/units/unit4/searchsearcher#DB_PASSWORD
+  INGEST_TOKEN: bao://secret/compose/units/unit4/searchsearcher#INGEST_TOKEN
+  SEARCHSEARCHER_COOKIE_SECRET: bao://secret/compose/units/unit4/searchsearcher#SEARCHSEARCHER_COOKIE_SECRET
+  SEARCHSEARCHER_OIDC_SECRET: bao://secret/compose/units/unit4/searchsearcher#SEARCHSEARCHER_OIDC_SECRET
+
 services:
 
   postgres:
