@@ -155,7 +155,20 @@ async function executeSearch(
 
     const vector = weightedVector();
     conditions.push(sql`${vector} @@ to_tsquery('english', ${tsQuery})`);
-    rankExpr = sql<number>`ts_rank_cd(${vector}, to_tsquery('english', ${tsQuery}))`;
+    // ts_rank_cd alone rewards long bodies that repeat a word: a weekly ledger
+    // mentioning "Washington" a dozen times outranked the article titled
+    // "The Washington Table". Normalize by length (flag 1 = divide by
+    // 1 + log(length)) and boost titles: +10 when the typed phrase appears
+    // verbatim in the title, +1 when every query word appears in the title.
+    const titlePhrase = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    rankExpr = sql<number>`(
+      ts_rank_cd(${vector}, to_tsquery('english', ${tsQuery}), 1)
+      + CASE
+          WHEN ${searchableItems.title} ILIKE ${titlePhrase} THEN 10
+          WHEN to_tsvector('english', ${searchableItems.title}) @@ to_tsquery('english', ${tsQuery}) THEN 1
+          ELSE 0
+        END
+    )`;
   }
 
   if (category && VALID_CATEGORIES.includes(category as ItemCategory)) {

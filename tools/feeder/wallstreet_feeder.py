@@ -32,10 +32,17 @@ import requests
 BASE = "https://blacksheepwallstreet.com"
 FEEDS = [
     (1, f"{BASE}/archive/vol-1.json"),
+    (2, f"{BASE}/archive/vol-2.json"),
     (None, f"{BASE}/reports.json"),  # vol comes from each item, default current
 ]
 DEFAULT_API = "https://search.theofficialblacksheepco.com"
-FALLBACK_IMAGE = f"{BASE}/images/w-l.jpeg"
+# Search-only picture overrides, keyed by slug(title). The site keeps its own
+# art; these replace it only in search results. The Week 40 Loss Ledger's
+# cover (loss-ledger-cover.jpg) lacks the team logos — search shows the
+# logo version of the W/L graphic instead.
+IMAGE_OVERRIDES = {
+    "the-loss-ledger---week-40": f"{BASE}/images/w-l.jpeg",
+}
 
 
 def slug(s: str) -> str:
@@ -64,9 +71,17 @@ def embargoed(r: dict) -> bool:
 
 
 def build(r: dict, vol: int, server_name: str) -> dict:
+    # The report's own art, else the first picture in its body. No site-wide
+    # fallback: the old one (w-l.jpeg, the weekly sports W/L graphic) put a
+    # football card on restaurant and family stories. With no image the UI
+    # shows the site icon instead.
     image = r.get("image") or ""
+    if not image:
+        m = re.search(r"!\[[^\]]*\]\(([^)\s]+)", r.get("body") or "")
+        image = m.group(1) if m else ""
     if image.startswith("/"):
         image = BASE + image
+    image = IMAGE_OVERRIDES.get(slug(r["title"]), image)
     body = clean_body(r.get("body") or "")
     content = r.get("excerpt") or ""
     if body:
@@ -84,7 +99,7 @@ def build(r: dict, vol: int, server_name: str) -> dict:
         "tags": ["article", "black-sheep-wall-street", slug(r.get("section", "")), f"vol-{vol}"],
         "status": "active",
         "clearance": 0,
-        "metadata": {"url": f"{BASE}/", "image": image or FALLBACK_IMAGE,
+        "metadata": {"url": f"{BASE}/", "image": image,
                      "slug": r.get("slug", ""), "section": r.get("section", ""),
                      "author": r.get("author", ""), "date": r.get("date", ""),
                      "vol": vol, "site": "blacksheepwallstreet.com"},
